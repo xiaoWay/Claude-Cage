@@ -1,0 +1,20 @@
+.location-evidence { margin-block: 16px; border: 1px solid var(--line); border-radius: 10px; }
+.location-evidence h4 { margin: 0 0 8px; }
+.location-conflict { border-color: var(--warning, #b7791f); }
+.location-evidence-table { overflow-x: auto; margin-block: 12px; }
+.location-evidence table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.location-evidence th, .location-evidence td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+.location-timezone-choice { display: grid; gap: 10px; }
+.location-timezone-choice label { display: grid; gap: 6px; }
+.location-timezone-choice > button { justify-self: start; }
+.location-evidence summary { cursor: pointer; padding: 14px; overflow-wrap: anywhere; }
+.location-evidence summary > * { margin-right: 12px; }
+.location-evidence summary strong[data-state="failed"] { color: var(--danger, #b91c1c); }
+.location-evidence summary strong[data-state="unknown"] { color: var(--warning, #b7791f); }
+.location-source-summary { font-size: 13px; color: var(--muted); }
+.location-evidence-content { padding: 0 14px 14px; }
+.location-timezone-comparison { display: grid; grid-template-columns: minmax(100px, auto) 1fr; gap: 8px 16px; }
+.location-timezone-comparison dd { margin: 0; overflow-wrap: anywhere; }
+.location-timezone-readbacks { margin-block: 14px; }
+.settings-page .settings-fields .location-evidence h4 { margin: 12px 0 8px; }
+@media (max-width: 600px) { .location-source-summary { display: block; margin-top: 6px; } }

@@ -122,16 +122,17 @@ type Settings struct {
 	ExitPolicy      cage.ExitPolicy `json:"exit_policy"`
 }
 type Location struct {
-	IP                       string    `json:"ip"`
-	Country                  string    `json:"country"`
-	CountryCode              string    `json:"country_code"`
-	Region                   string    `json:"region"`
-	RegionCode               string    `json:"region_code,omitempty"`
-	SuggestedLocale          string    `json:"suggested_locale,omitempty"`
-	SuggestedBrowserLanguage string    `json:"suggested_browser_language,omitempty"`
-	City                     string    `json:"city"`
-	Timezone                 string    `json:"timezone"`
-	CheckedAt                time.Time `json:"checked_at"`
+	Evidence                 *exitpolicy.LocationEvidence `json:"evidence,omitempty"`
+	IP                       string                       `json:"ip"`
+	Country                  string                       `json:"country"`
+	CountryCode              string                       `json:"country_code"`
+	Region                   string                       `json:"region"`
+	RegionCode               string                       `json:"region_code,omitempty"`
+	SuggestedLocale          string                       `json:"suggested_locale,omitempty"`
+	SuggestedBrowserLanguage string                       `json:"suggested_browser_language,omitempty"`
+	City                     string                       `json:"city"`
+	Timezone                 string                       `json:"timezone"`
+	CheckedAt                time.Time                    `json:"checked_at"`
 }
 type savedProfile struct {
 	Config      cage.Config `json:"config"`
@@ -264,9 +265,9 @@ func probeLocation(ctx context.Context, c cage.Config) (Location, error) {
 	if state, message := exitpolicy.CheckExitCountry(ip, nil); state == cage.CheckFailed {
 		return Location{IP: ip, CheckedAt: time.Now()}, errors.New(message)
 	}
-	loc, err := probeLocationForIP(ctx, c, ip)
+	loc, err := probeVerifiedLocationForIP(ctx, c, ip)
 	if err != nil {
-		return Location{IP: ip, CheckedAt: time.Now()}, err
+		return loc, err
 	}
 	observed := loc.exitLocation()
 	if state, message := exitpolicy.CheckExitCountry(ip, &observed); state != cage.CheckPassed {
@@ -282,7 +283,30 @@ func probeEnvironmentLocation(ctx context.Context, c cage.Config, _ Preferences)
 }
 
 func (l Location) exitLocation() cage.ExitLocation {
-	return cage.ExitLocation{IP: l.IP, CountryCode: l.CountryCode, Region: l.Region, City: l.City}
+	country, region, city := l.CountryCode, l.Region, l.City
+	if l.Evidence != nil {
+		if l.Evidence.CountryStatus == exitpolicy.LocationConflict {
+			country = ""
+		}
+		for _, source := range l.Evidence.Sources {
+			if source.Error != "" {
+				continue
+			}
+			// Conflicting estimates cannot satisfy a saved city/region rule
+			// or silently establish its first automatic baseline.
+			if !strings.EqualFold(strings.TrimSpace(source.Region), strings.TrimSpace(l.Region)) {
+				region = ""
+			}
+			if !strings.EqualFold(strings.TrimSpace(source.City), strings.TrimSpace(l.City)) {
+				city = ""
+			}
+			if source.CountryCode == "CN" {
+				country = "CN"
+				break
+			}
+		}
+	}
+	return cage.ExitLocation{IP: l.IP, CountryCode: country, Region: region, City: city}
 }
 
 func probeLocationForIP(ctx context.Context, c cage.Config, ip string) (Location, error) {
@@ -298,4 +322,40 @@ func probeLocationForIP(ctx context.Context, c cage.Config, ip string) (Location
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}
 	return lookupLocation(ctx, client, address)
+}
+
+// Startup and settings application always sample the current exit, but reuse
+// its recent location evidence instead of querying every provider repeatedly.
+func (s *Server) probeEnvironmentLocation(ctx context.Context, cfg cage.Config) (Location, error) {
+	ip, err := cage.ProbeExitIP(ctx, cfg)
+	if err != nil {
+		return Location{}, err
+	}
+	if state, message := exitpolicy.CheckExitCountry(ip, nil); state == cage.CheckFailed {
+		return Location{IP: ip, CheckedAt: time.Now()}, errors.New(message)
+	}
+	loc, err := s.locationForIP(ctx, cfg, ip)
+	if err != nil {
+		return loc, err
+	}
+	observed := loc.exitLocation()
+	if state, message := exitpolicy.CheckExitCountry(ip, &observed); state != cage.CheckPassed {
+		return loc, errors.New(message)
+	}
+	return loc, nil
+}
+
+func probeVerifiedLocationForIP(ctx context.Context, cfg cage.Config, ip string) (Location, error) {
+	address := net.ParseIP(ip)
+	if address == nil {
+		return Location{}, errors.New("出口地址无效")
+	}
+	e, err := cage.NewEgress(cfg)
+	if err != nil {
+		return Location{}, err
+	}
+	transport := &http.Transport{Proxy: nil, DialContext: e.DialContext, ForceAttemptHTTP2: true}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}
+	return lookupVerifiedLocation(ctx, client, address)
 }

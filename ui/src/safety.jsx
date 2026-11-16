@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { api, writeClipboard } from "./api";
 import { Modal } from "./views";
+import { LocationEvidence } from "./location-evidence.jsx";
 import { DeviceChecks } from "./device-checks";
 import { networkState, reportForSharing } from "./safety-state.mjs";
 
@@ -47,6 +48,8 @@ export async function bindDetectedMacOSExit(ip, onConfirm) {
 
 export function SafetyPanel({
   status,
+  timezone,
+  automaticTimezone,
   onClose,
   onSettings,
   onOpenPage,
@@ -164,6 +167,8 @@ export function SafetyPanel({
             出口规则
           </button>
         </div>
+        <LocationEvidence automaticTimezone={automaticTimezone} timezone={timezone} checks={report?.checks} location={status.location} busy={busy} onConfigure={() => onSettings("region")} />
+        <p className="field-help">出口采样、配置读回与定位来源分别核对。关键检查通过不代表 Claude 账户审核通过。</p>
         {(error || notice) && (
           <div
             role="status"

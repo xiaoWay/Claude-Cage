@@ -441,7 +441,7 @@ func (s *Server) startEnvironment(syncTimezone bool) error {
 	auto := preferences.AutoTimezone || preferences.AutoLanguage
 	s.mu.Unlock()
 	s.setMessage("正在验证代理出口…")
-	loc, probeErr := probeEnvironmentLocation(s.operationContext(), cfg, preferences)
+	loc, probeErr := s.probeEnvironmentLocation(s.operationContext(), cfg)
 	if s.operationContext().Err() != nil {
 		return s.operationContext().Err()
 	}
@@ -465,7 +465,7 @@ func (s *Server) startEnvironment(syncTimezone bool) error {
 		within, _ := cfg.ExitPolicy.Evaluate(loc.IP, &observed)
 		updated := cfg
 		if within == cage.CheckPassed {
-			updated = autoRegionSettings(cfg, preferences, loc)
+			updated = autoRegionSettings(cfg, cfg, preferences, loc)
 		}
 		if updated != cfg {
 			// Changing a live hostagent's profile is forbidden. Stop before replacing it.
@@ -577,7 +577,7 @@ func (s *Server) apply(v savedProfile, validate bool) error {
 	changed := old != v.Config || oldPrefs.AutoTimezone != v.Preferences.AutoTimezone || oldPrefs.AutoLanguage != v.Preferences.AutoLanguage
 	if changed && validate && old.RequireManagedProxy(s.profile) == nil {
 		s.setMessage("正在验证新出口，现有环境保持运行…")
-		loc, e := probeEnvironmentLocation(s.operationContext(), v.Config, v.Preferences)
+		loc, e := s.probeEnvironmentLocation(s.operationContext(), v.Config)
 		if err := s.finishLocationProbe(v.Config, loc, e); err != nil {
 			return err
 		}
@@ -586,7 +586,7 @@ func (s *Server) apply(v savedProfile, validate bool) error {
 				return e
 			}
 		} else {
-			v.Config = autoRegionSettings(v.Config, v.Preferences, loc)
+			v.Config = autoRegionSettings(v.Config, old, v.Preferences, loc)
 		}
 		v.Config.ExitPolicy = v.Config.ExitPolicy.BindMissing(loc.exitLocation())
 		observed := loc.exitLocation()
@@ -597,6 +597,9 @@ func (s *Server) apply(v savedProfile, validate bool) error {
 			return errors.New(message)
 		}
 	}
+	// Automatic evidence may have restored an unchanged saved region. Avoid a
+	// needless stop/restart after declining an uncertain client suggestion.
+	changed = old != v.Config || oldPrefs.AutoTimezone != v.Preferences.AutoTimezone || oldPrefs.AutoLanguage != v.Preferences.AutoLanguage
 	if changed {
 		if s.windowsGuest != nil && wasReady && (old.Timezone != v.Config.Timezone || old.Locale != v.Config.Locale) {
 			if err := s.closeProxyGate("正在应用 Windows 系统设置，外网等待重新检查"); err != nil {

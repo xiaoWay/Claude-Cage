@@ -784,10 +784,12 @@ func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 		requestError(w, finishErr)
 		return
 	}
-	if err != nil {
+	if err != nil && loc.Evidence == nil {
 		requestError(w, err)
 		return
 	}
+	// A completed location probe can have conflicting evidence. Return it for
+	// inspection; finishLocationProbe has already closed unsafe networking.
 	jsonReply(w, loc)
 }
 func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {

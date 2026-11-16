@@ -2077,6 +2077,8 @@ function App() {
       )}
       {safetyOpen && (
         <SafetyPanel
+          timezone={settings.timezone}
+          automaticTimezone={settings.auto_timezone}
           status={
             connectionError
               ? {

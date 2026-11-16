@@ -166,6 +166,9 @@ func (s *Server) recordLocationProbeLocked(loc Location, err error) {
 	s.exitProbeError = ""
 	if err != nil {
 		s.locationError = err.Error()
+		if loc.Evidence != nil {
+			s.location = &loc
+		}
 		return
 	}
 	s.location = &loc
@@ -236,11 +239,17 @@ func (s *Server) publishReport(report cage.SafetyReport) {
 }
 
 func (s *Server) safetyCheck(w http.ResponseWriter, r *http.Request) {
-	if s.macosGuest != nil {
-		s.launch(w, "safety", s.checkMacOSNetwork)
-		return
-	}
-	s.launch(w, "safety", s.runSafetyCheck)
+	s.launch(w, "safety", func() error {
+		// Explicit rechecks refresh the sources; routine supervision uses the
+		// same-IP cache and never turns into repeated third-party polling.
+		s.mu.Lock()
+		s.locations, s.location = nil, nil
+		s.mu.Unlock()
+		if s.macosGuest != nil {
+			return s.checkMacOSNetwork()
+		}
+		return s.runSafetyCheck()
+	})
 }
 
 func (s *Server) pauseNetwork(w http.ResponseWriter, r *http.Request) {
@@ -593,9 +602,9 @@ func (s *Server) locationForIP(ctx context.Context, cfg cage.Config, ip string) 
 	if ok && time.Since(loc.CheckedAt) < time.Hour && loc.CountryCode != "" {
 		return loc, nil
 	}
-	loc, err := probeLocationForIP(ctx, cfg, ip)
+	loc, err := probeVerifiedLocationForIP(ctx, cfg, ip)
 	if err != nil {
-		return Location{}, err
+		return loc, err
 	}
 	s.mu.Lock()
 	if s.locations == nil {
@@ -626,10 +635,16 @@ func (s *Server) checkExitPolicy(ctx context.Context, cfg cage.Config, ip string
 	}
 	loc, err := s.locationForIP(ctx, cfg, ip)
 	if err != nil {
+		s.mu.Lock()
+		s.recordLocationProbeLocked(loc, err)
+		s.mu.Unlock()
 		return cage.CheckUnknown, "出口定位暂时不可用，无法确认非中国大陆出口，外网保持关闭"
 	}
 	observed := loc.exitLocation()
 	state, message := policy.Evaluate(ip, &observed)
+	if state == cage.CheckUnknown && loc.Evidence != nil && loc.Evidence.CountryStatus == exitpolicy.LocationConflict {
+		message = "定位结果不一致：国家或地区来源冲突，外网保持关闭；请重新检测或更换出口"
+	}
 	s.mu.Lock()
 	s.recordLocationProbeLocked(loc, nil)
 	s.mu.Unlock()
@@ -880,7 +895,7 @@ func (s *Server) runSafetyCheck() (returned error) {
 		}
 		if boundaryErr == nil {
 			if s.guestSettingsOK(boundary, cfg) {
-				evidence := "客机进程与系统的时区和语言读回结果符合已应用配置"
+				evidence := fmt.Sprintf("已应用时区 %s；客机进程读回 %s、系统读回 %s；语言符合已应用配置", cfg.Timezone, boundary.TZ, boundary.SystemTimezone)
 				if linuxProbe {
 					evidence += "；进程与系统时区文件的实际 UTC 偏移均符合已应用时区"
 				}
@@ -1001,7 +1016,7 @@ func (s *Server) runSafetyCheck() (returned error) {
 	_ = diagnostics.New(s.profile).Record("info", "safety-probe", fmt.Sprintf("stage=browser error=%v observation=%+v", browserErr, browser))
 	if browserErr == nil {
 		if s.browserSettingsIssue(browser, cfg) == "" {
-			set("browser_settings", cage.CheckPassed, "浏览器诊断页面读到客机平台；实际时区与首选语言符合已应用配置", "")
+			set("browser_settings", cage.CheckPassed, fmt.Sprintf("实际浏览器页面读回时区 %s、语言 %s、平台 %s，与已应用配置相符；此项不证明 IP 物理位置或账户审核结果", browser.Timezone, browser.Language, browser.Platform), "")
 		} else {
 			set("browser_settings", cage.CheckFailed, s.browserSettingsIssue(browser, cfg), "更新环境组件以补齐浏览器语言包并应用已保存设置；仍失败时查看各字段的期望值与实际值")
 		}
@@ -1049,8 +1064,9 @@ func (s *Server) runSafetyCheck() (returned error) {
 	set("exit_consistency", result, message, "选择非中国大陆出口，并核对静态 IP 或允许地区；静态 IP 和不限地区均须确认出口国家，已有基准不会随重检改变")
 	report.Checks = append(report.Checks, cage.SafetyCheck{ID: "third_party_reputation", Title: "第三方 IP 信誉", State: cage.CheckUnknown, CheckedAt: time.Now(), Evidence: "未自动获取社区评分。可在 Cage 浏览器中打开补充检查；结果不替代底层隔离证据。"})
 	s.mu.Lock()
-	autoLanguage, location := s.preferences.AutoLanguage, s.location
+	autoLanguage, autoTimezone, location := s.preferences.AutoLanguage, s.preferences.AutoTimezone, s.location
 	s.mu.Unlock()
+	report.Checks = append(report.Checks, locationConsistencyCheck(location, cfg.Timezone, autoTimezone))
 	if autoLanguage && (location == nil || location.SuggestedLocale == "") {
 		report.Checks = append(report.Checks, cage.SafetyCheck{ID: "language_suggestion", Title: "地区语言建议", State: cage.CheckUnknown, CheckedAt: time.Now(), Evidence: "当前地区没有可用的自动语言建议，已保留配置中的语言。", Remedy: "可在时区与语言设置中关闭自动，并手动选择"})
 	}
