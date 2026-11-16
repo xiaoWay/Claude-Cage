@@ -122,3 +122,43 @@ func TestDeviceChecksSavedOptionsAndIdentityConsistency(t *testing.T) {
 		t.Fatal("inconsistent browser version passed")
 	}
 }
+
+func TestDeviceBrowserVersionUsesProcessEvidence(t *testing.T) {
+	for _, tc := range []struct{ name, product, ua, want string }{
+		{"reduced UA", "Chrome/156.0.8078.79", "Chrome/156.0.0.0", "passed"},
+		{"headless", "HeadlessChrome/156.0.8078.79", "HeadlessChrome/156.0.0.0", "passed"},
+		{"Chromium", "Chromium/156.0.8078.79", "Chrome/156.0.0.0", "passed"},
+		{"real mismatch", "Chrome/151.0.7777.1", "Chrome/156.0.0.0", "failed"},
+		{"one major mismatch", "Chrome/155.0.7777.1", "Chrome/156.0.0.0", "failed"},
+		{"older component", "", "Chrome/156.0.0.0", "unknown"},
+		{"missing page UA", "Chrome/156.0.8078.79", "", "unknown"},
+		{"invalid product", "feature estimate 149-151", "Chrome/156.0.0.0", "unknown"},
+		{"invalid version", "Chrome/not-a-version", "Chrome/156.0.0.0", "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := sampleDevice()
+			v.UserAgent, v.BrowserProduct = tc.ua, tc.product
+			items, _ := evaluateDevice(nil, v)
+			if got := checkState(items, "browser-version"); got != tc.want {
+				t.Fatalf("version state = %s; want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDeviceProcessVersionDoesNotMaskConflictingClientHints(t *testing.T) {
+	v := sampleDevice()
+	v.BrowserProduct = "Chrome/142.0.1234.5"
+	if err := json.Unmarshal([]byte(`{"brands":[{"brand":"Chromium","version":"141"}],"platform":"Linux"}`), &v.ClientHints); err != nil {
+		t.Fatal(err)
+	}
+	items, _ := evaluateDevice(nil, v)
+	if checkState(items, "browser-version") != "passed" || checkState(items, "user-agent") != "failed" {
+		t.Fatal("process agreement concealed contradictory Client Hints")
+	}
+	v.BrowserProduct = "Chrome/142.0.1234.5\nprivate text"
+	items, _ = evaluateDevice(nil, v)
+	if checkState(items, "browser-evidence") != "unknown" {
+		t.Fatal("malformed process metadata was displayed")
+	}
+}

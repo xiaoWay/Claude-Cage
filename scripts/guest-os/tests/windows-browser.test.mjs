@@ -637,7 +637,11 @@ integration("audit reads configured browser state separately from expected value
   const f = await fixture(t, { timezone: "Pacific/Honolulu", language: "ja-JP", diagnostic: true }), one = await f.open();
   await f.context().addCookies([{ name: "private_fixture", value: "test-only", domain: "198.18.0.254", path: "/" }]);
   const before = await f.call("tabs", {}, "GET");
-  const result = await f.call("audit", { timezone: "Asia/Tokyo", network: true });
+  const result = await f.call("audit", { timezone: "Asia/Tokyo", network: true, device: true });
+  const version = await f.call("info", {});
+  assert.equal(result.device.browser_product, version.product);
+  assert.equal(result.device.javascript_version, version.jsVersion);
+  assert.equal(result.device.user_agent.match(/Chrome\/(\d+)\./)[1], version.product.match(/\/(\d+)\./)[1]);
   assert.equal(result.timezone, "Pacific/Honolulu"); assert.equal(result.expected_timezone, "Asia/Tokyo"); assert.equal(result.language, "ja-JP");
   assert.equal(result.network.status, 503); assert.equal(result.network.ip, "198.51.100.44"); assert.deepEqual(f.diagnosticCookies, [""]);
   assert.equal((await f.call("tabs", {}, "GET")).active, one.id); assert.equal((await f.call("tabs", {}, "GET")).tabs.length, before.tabs.length);
