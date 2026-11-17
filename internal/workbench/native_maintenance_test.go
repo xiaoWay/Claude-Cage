@@ -49,6 +49,8 @@ func nativeMaintenanceRequest(s *Server, method, path, body string) *httptest.Re
 
 func TestNativeVersionsUsesBoundTransportAndActualManifest(t *testing.T) {
 	var mu sync.Mutex
+	var unavailable, malformed atomic.Bool
+	var probes atomic.Int32
 	snapshot := nativeComponentSnapshot{}
 	guest := newMacWorkspaceGuest(t, func(channel ssh.Channel, command string) (uint32, bool) {
 		if !strings.Contains(command, "cage-components.json") {
@@ -57,6 +59,14 @@ func TestNativeVersionsUsesBoundTransportAndActualManifest(t *testing.T) {
 		if !strings.Contains(command, "cage-cli/bin/python3") || !strings.Contains(command, "hashlib.file_digest") {
 			t.Error("version read omitted the bundled Python and actual file verification")
 			return 1, true
+		}
+		probes.Add(1)
+		if unavailable.Load() {
+			return 255, true
+		}
+		if malformed.Load() {
+			fmt.Fprint(channel, "invalid snapshot")
+			return 0, true
 		}
 		mu.Lock()
 		defer mu.Unlock()
@@ -90,12 +100,57 @@ func TestNativeVersionsUsesBoundTransportAndActualManifest(t *testing.T) {
 		if status == "current" && result.Tools["claude"].Current != "2.1.311 (Claude Code)" {
 			t.Fatal("tool version was inferred from required version")
 		}
+		before := probes.Load()
+		state := nativeMaintenanceRequest(s, "GET", "/api/status", "")
+		if probes.Load() != before {
+			t.Fatal("status polling probed the guest again")
+		}
+		var summary struct {
+			UpdateRequired bool   `json:"environment_update_required"`
+			Error          string `json:"environment_update_error"`
+		}
+		if state.Code != 200 || json.Unmarshal(state.Body.Bytes(), &summary) != nil {
+			t.Fatal(state.Code, state.Body.String())
+		}
+		if summary.UpdateRequired != result.Components.UpdateRequired {
+			t.Fatalf("status and environment.versions disagree: status=%t, versions=%t", summary.UpdateRequired, result.Components.UpdateRequired)
+		}
+		if status == "update_required" && !strings.Contains(summary.Error, "版本与组件") {
+			t.Fatal("missing component update recovery", summary.Error)
+		}
+		if status == "current" && summary.Error != "" {
+			t.Fatal("successful verification retained the old update error", summary.Error)
+		}
 	}
 	check("update_required", false)
 	mu.Lock()
 	snapshot.Manifest = &required.GuestManifest
 	snapshot.Installed = true
 	snapshot.Tools = map[string]string{"claude": "2.1.311 (Claude Code)"}
+	mu.Unlock()
+	check("current", true)
+	unavailable.Store(true)
+	check("unknown", false)
+	unavailable.Store(false)
+	mu.Lock()
+	old := required.GuestManifest
+	old.Revision = "previous-components"
+	old.AppVersion = "0.1.7-rc.1"
+	snapshot.Manifest = &old
+	mu.Unlock()
+	check("update_required", true)
+	unavailable.Store(true)
+	check("unknown", false)
+	unavailable.Store(false)
+	malformed.Store(true)
+	check("unknown", false)
+	malformed.Store(false)
+	mu.Lock()
+	// Compatibility is determined by the component protocol/revision, not
+	// the application's display version alone.
+	compatible := required.GuestManifest
+	compatible.AppVersion = "0.1.7-rc.1"
+	snapshot.Manifest = &compatible
 	mu.Unlock()
 	check("current", true)
 	mu.Lock()
@@ -107,6 +162,43 @@ func TestNativeVersionsUsesBoundTransportAndActualManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("unknown", false)
+}
+
+func TestNativeVersionsCannotClearUpdateAcrossMaintenanceJob(t *testing.T) {
+	var s *Server
+	var snapshot nativeComponentSnapshot
+	guest := newMacWorkspaceGuest(t, func(channel ssh.Channel, command string) (uint32, bool) {
+		if !strings.Contains(command, "cage-components.json") {
+			return 0, false
+		}
+		// Simulate maintenance starting and finishing while an old version
+		// request is still reading its otherwise matching snapshot.
+		s.setJobForTest(Job{ID: "new-maintenance", Kind: "environment-update"})
+		if err := json.NewEncoder(channel).Encode(snapshot); err != nil {
+			return 1, true
+		}
+		return 0, true
+	})
+	s = guest.s
+	kit := macMaintenanceKit(t)
+	s.exe = filepath.Join(filepath.Dir(kit), "cage")
+	required, err := guestos.RequiredNativeComponents(kit, guestos.MacOS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot = nativeComponentSnapshot{Manifest: &required.GuestManifest, Installed: true}
+	s.guestUpdateRequired = true
+	s.guestUpdateError = "component update failed; retry"
+	response := nativeMaintenanceRequest(s, "GET", "/api/environment/versions", "")
+	var result struct{ Components componentVersions }
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &result) != nil || result.Components.Status != "unknown" || !result.Components.UpdateRequired {
+		t.Fatal("stale version result superseded maintenance", response.Code, response.Body.String())
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.guestUpdateRequired || s.guestUpdateError != "component update failed; retry" {
+		t.Fatal("stale version result cleared maintenance failure")
+	}
 }
 
 func TestNativeMaintenanceTransfersToExistingMacIdentity(t *testing.T) {

@@ -61,6 +61,7 @@ func (s *Server) readNativeComponents(ctx context.Context) (nativeComponentSnaps
 }
 
 func (s *Server) nativeEnvironmentVersions(w http.ResponseWriter, r *http.Request) {
+	before := s.jobs.snapshot()
 	kit, system := s.nativeComponentKit()
 	required, kitError := guestos.RequiredNativeComponents(kit, system)
 	components := componentVersions{Status: "stopped", Required: required.GuestManifest}
@@ -80,10 +81,11 @@ func (s *Server) nativeEnvironmentVersions(w http.ResponseWriter, r *http.Reques
 		components.Status = "update_required"
 		installed = snapshot.Installed
 		if err != nil {
+			components.Status = "unknown"
 			detail = "客机组件版本暂时无法核验。旧环境可以同步环境组件；请先登录客机，再重试。"
 		} else {
 			detail = snapshot.Error
-			if snapshot.Manifest != nil && kitError == nil && snapshot.Installed && snapshot.Manifest.Protocol == required.Protocol && snapshot.Manifest.Revision == required.Revision {
+			if snapshot.Manifest != nil && kitError == nil && snapshot.Installed && len(snapshot.Missing) == 0 && snapshot.Error == "" && snapshot.Manifest.Protocol == required.Protocol && snapshot.Manifest.Revision == required.Revision {
 				components.Status = "current"
 				components.UpdateRequired = false
 			}
@@ -103,6 +105,7 @@ func (s *Server) nativeEnvironmentVersions(w http.ResponseWriter, r *http.Reques
 		detail = "此应用的原生组件包无法核验，请重新安装完整的 Cage 应用。"
 	}
 	s.mu.Lock()
+	s.publishComponentVersionsLocked(&components, before)
 	busy := s.jobs.snapshot().Running
 	identity := s.identity
 	s.mu.Unlock()

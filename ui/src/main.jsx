@@ -1756,6 +1756,7 @@ function App() {
                           if (!running && guestSystem?.activate) {
                             api("/environment/guest-systems/activate", {}).then(() => native("reconnect")).catch((e) => setToast(e.message));
                           } else if (!running && setupProxy) openSettings("network");
+                          else if (running && status.environment_update_required) openSettings("project");
                           else if (!running || !status.ready)
                             startEnvironment(!running && guestSystem?.guest_system === "debian-13" && !guestSystem.clone ? { guest_system: "debian-13" } : !running && guestSystem ? {
                               guest_system: guestSystem.guest_system, media: guestSystem.media, sha256: guestSystem.sha256,
@@ -1787,11 +1788,13 @@ function App() {
                               ? "配置网络与代理"
                               : guestSystem?.activate ? "打开工作台" : guestSystem?.pending ? "继续安装" :
                                 guestSystem && guestSystem.guest_system !== "debian-13" ? "安装客户机" : "启动 Cage 环境"
-                            : !status.ready
-                              ? "恢复浏览器"
-                              : !workspace && projectsAvailable
-                                ? "打开项目"
-                                : "新建终端"}
+                            : status.environment_update_required
+                              ? "更新环境组件"
+                              : !status.ready
+                                ? "恢复浏览器"
+                                : !workspace && projectsAvailable
+                                  ? "打开项目"
+                                  : "新建终端"}
                       </button>
                     </div>
                     {terminalMenuAt("start")}

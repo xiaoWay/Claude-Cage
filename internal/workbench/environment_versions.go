@@ -16,6 +16,8 @@ import (
 
 var errGuestUpdateRequired = errors.New("环境组件需要更新，请先保存浏览器和编辑器中的修改。工作台终端与磁盘保留，编辑器内终端可能结束。")
 
+const environmentComponentUpdateRemedy = "请在设置的“版本与组件”中更新环境组件，再重新检测；仅重启不会安装缺失文件。"
+
 const guestConnectionSnapshot = `sudo cat /etc/claude-cage/browser-control.json; printf '\n'; cat "$HOME/.config/claude-cage/browser-password"; printf '\n'; if sudo test -f /etc/claude-cage/components.json; then sudo cat /etc/claude-cage/components.json; else printf 'null'; fi`
 
 func parseGuestConnection(data []byte) (guestCredentials, *cage.GuestManifest, error) {
@@ -43,6 +45,30 @@ type toolVersion struct {
 	Required string `json:"required"`
 }
 
+// An explicit version read shares its confirmed result with status polling.
+// Failed reads and replies spanning a maintenance job cannot clear an update.
+// Caller holds s.mu.
+func (s *Server) publishComponentVersionsLocked(components *componentVersions, before Job) {
+	job := s.jobs.snapshot()
+	if before.Running || job.Running || before.ID != job.ID {
+		components.Status = "unknown"
+	}
+	switch components.Status {
+	case "current", "update_required":
+		s.guestManifest = components.Current
+		s.guestUpdateRequired = components.UpdateRequired
+		s.guestUpdateError = ""
+		if components.UpdateRequired {
+			s.guestUpdateError = environmentComponentUpdateRemedy
+		}
+		if s.macosGuest != nil {
+			s.macComponentsChecked = true
+		}
+	case "unknown", "stopped":
+		components.UpdateRequired = s.guestUpdateRequired
+	}
+}
+
 // Version commands run only for this explicit request, never in status polling.
 func (s *Server) environmentVersions(w http.ResponseWriter, r *http.Request) {
 	if s.macosGuest != nil || s.windowsGuest != nil {
@@ -51,6 +77,7 @@ func (s *Server) environmentVersions(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
+	before := s.jobs.snapshot()
 	running := s.vmRunning()
 	components := componentVersions{Status: "stopped", Required: cage.RequiredGuestManifest()}
 	tools := map[string]toolVersion{}
@@ -117,6 +144,7 @@ CAGE_VERSIONS`)
 	}
 	tools["proxy"] = toolVersion{Current: proxy.Version, Required: requiredProxy}
 	s.mu.Lock()
+	s.publishComponentVersionsLocked(&components, before)
 	busy := s.jobs.snapshot().Running
 	allowed := s.toolsNetworkAllowedLocked()
 	identity := s.identity

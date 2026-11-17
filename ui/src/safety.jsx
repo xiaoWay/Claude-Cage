@@ -65,6 +65,10 @@ export function SafetyPanel({
   const total = report?.checks?.filter((c) => c.critical).length || 0;
   const run = async () => {
     setError("");
+    if (status.environment_update_required) {
+      onSettings("project");
+      return;
+    }
     if (
       status.vm_running &&
       !safety.gate &&
@@ -123,13 +127,15 @@ export function SafetyPanel({
             )}
             {busy
               ? "检查进行中"
-              : online
-                ? "暂停外网并重检"
-                : status.ready && safety.gate
-                  ? "重新检测"
-                  : status.vm_running
-                    ? "重启并检查"
-                    : "启动并检查"}
+              : status.environment_update_required
+                ? "更新环境组件"
+                : online
+                  ? "暂停外网并重检"
+                  : status.ready && safety.gate
+                    ? "重新检测"
+                    : status.vm_running
+                      ? "重启并检查"
+                      : "启动并检查"}
           </button>
         </>
       }

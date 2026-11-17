@@ -47,7 +47,7 @@ export function EnvironmentVersions({ status, onConfirm }) {
       {(error || data?.error) && <p role="alert" className="error-message"><SafetyMessage message={error || data.error} /></p>}
       <div className="environment-version-actions">
         <button disabled={loading || busy} onClick={refresh}>{loading ? "正在读取…" : "刷新版本"}</button>
-        {data?.components?.update_required && <button className="primary" disabled={busy || !status.vm_running} onClick={() => update(false)}>更新环境组件</button>}
+        {(data?.components?.update_required || (data?.maintenance?.native && data?.components?.status === "unknown")) && <button className="primary" disabled={busy || !status.vm_running} onClick={() => update(false)}>更新环境组件</button>}
         <button disabled={busy || !data?.tools_update_allowed} onClick={() => update(true)}>更新环境工具</button>
       </div>
       <p className="field-help">{data?.maintenance?.native
