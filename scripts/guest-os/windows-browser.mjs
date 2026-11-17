@@ -1399,7 +1399,14 @@ export function createNativeBrowserService(options = {}) {
       try {
         const auditPage = await isolated.newPage();
         const result = await auditPage.evaluate(() => ({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, language: navigator.language, platform: navigator.platform }));
-        if (input.device === true) result.device = await auditPage.evaluate(collectDeviceObservation);
+        if (input.device === true) {
+          result.device = await auditPage.evaluate(collectDeviceObservation);
+          try {
+            const version = await browserCDP.send("Browser.getVersion");
+            result.device.browser_product = version.product;
+            result.device.javascript_version = version.jsVersion;
+          } catch { /* Keep the page observation when process metadata is unavailable. */ }
+        }
         result.expected_timezone = expected;
         if (input.network === true) {
           try {

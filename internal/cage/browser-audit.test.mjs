@@ -114,6 +114,7 @@ test("local browser audit uses a syntactically valid async probe in the regular 
   const cdp = async (method, input) => {
     if (method === "Target.createTarget") return { targetId: "probe" };
     if (method === "Target.attachToTarget") return { sessionId: "isolated" };
+    if (method === "Browser.getVersion") return { product: "Chrome/156.0.8078.79", jsVersion: "15.6.276.8" };
     if (method === "Runtime.evaluate") {
       new vm.Script(input.expression);
       assert.equal(input.awaitPromise, true);
@@ -125,5 +126,26 @@ test("local browser audit uses a syntactically valid async probe in the regular 
   };
   const result = await auditBrowser(cdp, new Set(), false, "UTC", true);
   assert.equal(result.device.webgl.state, "unavailable");
+  assert.equal(result.device.browser_product, "Chrome/156.0.8078.79");
+  assert.equal(result.device.javascript_version, "15.6.276.8");
   assert.equal(closed, true);
+});
+
+test("unavailable process version preserves device evidence without substituting a feature estimate", async () => {
+  const calls = [];
+  const cdp = async (method) => {
+    calls.push(method);
+    if (method === "Target.createTarget") return { targetId: "probe" };
+    if (method === "Target.attachToTarget") return { sessionId: "isolated" };
+    if (method === "Runtime.evaluate") return { result: { value: { timezone: "UTC", device: { user_agent: "Chrome/156.0.0.0" } } } };
+    if (method === "Browser.getVersion") throw Error("unavailable");
+    if (method === "Target.closeTarget") return {};
+    throw Error("unexpected command");
+  };
+  const excluded = new Set();
+  const result = await auditBrowser(cdp, excluded, false, "UTC", true);
+  assert.equal(result.device.user_agent, "Chrome/156.0.0.0");
+  assert.equal(result.device.browser_product, undefined);
+  assert.equal(excluded.size, 0);
+  assert(calls.every(method => !/Override|addScript/.test(method)), "diagnostics must not alter browser identity or inject feature shims");
 });

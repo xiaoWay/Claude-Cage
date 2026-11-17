@@ -23,7 +23,17 @@ async function readBrowserSettings(cdp, exclusions, expectedTimezone, device) {
     }, sessionId);
     if (response.exceptionDetails || !response.result?.value)
       throw new Error("浏览器配置诊断未完成");
-    return response.result.value;
+    const result = response.result.value;
+    if (device && result.device) {
+      try {
+        // Read from the browser process, independently of page identity and
+        // feature-probe estimates. Do not change the UA or emulate APIs.
+        const version = await cdp("Browser.getVersion");
+        result.device.browser_product = version.product;
+        result.device.javascript_version = version.jsVersion;
+      } catch { /* Older or unavailable controllers leave version unobserved. */ }
+    }
+    return result;
   } finally {
     if (targetId) {
       try {

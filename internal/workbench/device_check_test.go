@@ -1,12 +1,63 @@
 package workbench
 
 import (
+	"bufio"
 	"encoding/json"
+	"github.com/sylvinus/agent-vm/internal/cage"
 	"github.com/sylvinus/agent-vm/internal/guestprofile"
+	"golang.org/x/crypto/ssh"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestDeviceReportBindsObservedSettingsToEnvironment(t *testing.T) {
+	var observation browserObservation
+	guest := newMacWorkspaceGuest(t, func(channel ssh.Channel, command string) (uint32, bool) {
+		if !strings.Contains(command, "macos-native-browser.mjs") {
+			return 0, false
+		}
+		scanner := bufio.NewScanner(channel)
+		for scanner.Scan() {
+			if err := json.NewEncoder(channel).Encode(observation); err != nil {
+				return 1, true
+			}
+		}
+		return 0, true
+	})
+	s := guest.s
+	cfg, err := loadConfig(s.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.safety.Gate = &cage.GateStatus{RunID: "fixture-run", Configuration: cfg.Fingerprint()}
+	observation = browserObservation{Timezone: cfg.Timezone, Language: cfg.BrowserLanguage, Platform: "Linux x86_64", Device: sampleDevice()}
+	observation.Device.BrowserProduct = "Chrome/142.0.0.0"
+	read := func() deviceCheckReport {
+		t.Helper()
+		w := nativeMaintenanceRequest(s, "POST", "/api/environment/device-check", `{"target":"browser"}`)
+		var report deviceCheckReport
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &report) != nil {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		if report.RunID != "fixture-run" || report.Configuration != cfg.Fingerprint() || report.ExpectedTimezone != cfg.Timezone || report.ExpectedLanguage != cfg.BrowserLanguage {
+			t.Fatal("device report did not bind its request to the current configuration")
+		}
+		if report.BrowserTimezone != observation.Timezone || report.BrowserLanguage != observation.Language || report.BrowserPlatform != observation.Platform || report.Browser == nil {
+			t.Fatal("device report omitted the actual page settings")
+		}
+		return report
+	}
+	before := read()
+	cfg.Timezone = "America/New_York"
+	if err = writePrivate(s.configPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	after := read()
+	if before.Configuration == after.Configuration || after.BrowserTimezone == after.ExpectedTimezone {
+		t.Fatal("saved settings replaced actual page observations")
+	}
+}
 
 func sampleDevice() *deviceObservation {
 	v := &deviceObservation{UserAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/142.0.0.0 Safari/537.36", Platform: "Linux x86_64"}
@@ -120,5 +171,45 @@ func TestDeviceChecksSavedOptionsAndIdentityConsistency(t *testing.T) {
 	items, _ = evaluateDevice(p, v)
 	if checkState(items, "user-agent") != "failed" {
 		t.Fatal("inconsistent browser version passed")
+	}
+}
+
+func TestDeviceBrowserVersionUsesProcessEvidence(t *testing.T) {
+	for _, tc := range []struct{ name, product, ua, want string }{
+		{"reduced UA", "Chrome/156.0.8078.79", "Chrome/156.0.0.0", "passed"},
+		{"headless", "HeadlessChrome/156.0.8078.79", "HeadlessChrome/156.0.0.0", "passed"},
+		{"Chromium", "Chromium/156.0.8078.79", "Chrome/156.0.0.0", "passed"},
+		{"real mismatch", "Chrome/151.0.7777.1", "Chrome/156.0.0.0", "failed"},
+		{"one major mismatch", "Chrome/155.0.7777.1", "Chrome/156.0.0.0", "failed"},
+		{"older component", "", "Chrome/156.0.0.0", "unknown"},
+		{"missing page UA", "Chrome/156.0.8078.79", "", "unknown"},
+		{"invalid product", "feature estimate 149-151", "Chrome/156.0.0.0", "unknown"},
+		{"invalid version", "Chrome/not-a-version", "Chrome/156.0.0.0", "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := sampleDevice()
+			v.UserAgent, v.BrowserProduct = tc.ua, tc.product
+			items, _ := evaluateDevice(nil, v)
+			if got := checkState(items, "browser-version"); got != tc.want {
+				t.Fatalf("version state = %s; want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDeviceProcessVersionDoesNotMaskConflictingClientHints(t *testing.T) {
+	v := sampleDevice()
+	v.BrowserProduct = "Chrome/142.0.1234.5"
+	if err := json.Unmarshal([]byte(`{"brands":[{"brand":"Chromium","version":"141"}],"platform":"Linux"}`), &v.ClientHints); err != nil {
+		t.Fatal(err)
+	}
+	items, _ := evaluateDevice(nil, v)
+	if checkState(items, "browser-version") != "passed" || checkState(items, "user-agent") != "failed" {
+		t.Fatal("process agreement concealed contradictory Client Hints")
+	}
+	v.BrowserProduct = "Chrome/142.0.1234.5\nprivate text"
+	items, _ = evaluateDevice(nil, v)
+	if checkState(items, "browser-evidence") != "unknown" {
+		t.Fatal("malformed process metadata was displayed")
 	}
 }

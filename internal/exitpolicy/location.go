@@ -13,26 +13,27 @@ import (
 	_ "time/tzdata"
 )
 
+var locationProviders = []struct {
+	name           string
+	url            string
+	requireSuccess bool
+}{
+	{"ipwho.is", "https://ipwho.is/%s?fields=success,ip,country,country_code,region,region_code,city,timezone.id", true},
+	{"IP.SB", "https://api.ip.sb/geoip/%s", false},
+	{"ipwhois.app", "https://ipwhois.app/json/%s", true},
+	{"GeoJS", "https://get.geojs.io/v1/ip/geo/%s.json", false},
+	{"ipapi.co", "https://ipapi.co/%s/json/", false},
+}
+
 // Lookup queries the configured providers as needed for the measured address.
 // The caller supplies the shared proxy-only client, including for fallback.
 func Lookup(ctx context.Context, client *http.Client, address net.IP) (Location, error) {
-	providers := []struct {
-		name           string
-		url            string
-		requireSuccess bool
-	}{
-		{"ipwho.is", "https://ipwho.is/" + address.String() + "?fields=success,ip,country,country_code,region,region_code,city,timezone.id", true},
-		{"IP.SB", "https://api.ip.sb/geoip/" + address.String(), false},
-		{"ipwhois.app", "https://ipwhois.app/json/" + address.String(), true},
-		{"GeoJS", "https://get.geojs.io/v1/ip/geo/" + address.String() + ".json", false},
-		{"ipapi.co", "https://ipapi.co/" + address.String() + "/json/", false},
-	}
-	failures := make([]string, 0, len(providers))
-	for _, provider := range providers {
+	failures := make([]string, 0, len(locationProviders))
+	for _, provider := range locationProviders {
 		if err := ctx.Err(); err != nil {
 			return Location{}, err
 		}
-		loc, err := queryLocation(ctx, client, provider.url, provider.requireSuccess, address)
+		loc, err := queryLocation(ctx, client, fmt.Sprintf(provider.url, address.String()), provider.requireSuccess, address)
 		if err == nil {
 			return loc, nil
 		}

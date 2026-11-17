@@ -8,19 +8,19 @@ import (
 func TestAutomaticRegionSettingsPreserveManualOverrides(t *testing.T) {
 	cfg := cage.DefaultConfig()
 	loc := Location{CountryCode: "JP", Timezone: "Asia/Tokyo"}
-	manual := autoRegionSettings(cfg, Preferences{}, loc)
+	manual := autoRegionSettings(cfg, cfg, Preferences{}, loc)
 	if manual != cfg {
 		t.Fatal("location changed manually selected settings")
 	}
-	tzOnly := autoRegionSettings(cfg, Preferences{AutoTimezone: true}, loc)
+	tzOnly := autoRegionSettings(cfg, cfg, Preferences{AutoTimezone: true}, loc)
 	if tzOnly.Timezone != "Asia/Tokyo" || tzOnly.Locale != cfg.Locale {
 		t.Fatal("timezone option changed language")
 	}
-	languageOnly := autoRegionSettings(cfg, Preferences{AutoLanguage: true}, loc)
+	languageOnly := autoRegionSettings(cfg, cfg, Preferences{AutoLanguage: true}, loc)
 	if languageOnly.Locale != "ja_JP.UTF-8" || languageOnly.BrowserLanguage != "ja-JP" || languageOnly.Timezone != cfg.Timezone {
 		t.Fatal("language option did not preserve independent timezone")
 	}
-	unknown := autoRegionSettings(cfg, Preferences{AutoLanguage: true}, Location{CountryCode: "ZZ"})
+	unknown := autoRegionSettings(cfg, cfg, Preferences{AutoLanguage: true}, Location{CountryCode: "ZZ"})
 	if unknown != cfg {
 		t.Fatal("unknown region invented a language setting")
 	}

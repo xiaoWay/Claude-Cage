@@ -7,13 +7,17 @@ import "./device-checks.css";
 const labels = { passed: "通过", failed: "未通过", unknown: "未观测", warning: "需关注", observed: "已观测" };
 const renderers = { software: "软件渲染", "virtual-gpu": "虚拟 GPU", "driver-reported": "驱动报告的渲染器", unobserved: "未观测" };
 
-export function DeviceChecks({ target, disabled = false }) {
-  const [report, setReport] = useState(null);
+export function DeviceChecks({ target, disabled = false, onReport, initialReport = null }) {
+  const [report, setReport] = useState(initialReport);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function run(selected) {
     setBusy(true); setError(""); setReport(null);
-    try { setReport(await api("/environment/device-check", { target: selected })); }
+    onReport?.(null, selected);
+    try {
+      const next = await api("/environment/device-check", { target: selected });
+      setReport(next); onReport?.(next, selected);
+    }
     catch (error) { setError(error.message); }
     finally { setBusy(false); }
   }
@@ -29,11 +33,17 @@ export function DeviceChecks({ target, disabled = false }) {
       <p>{report.target === "desktop" ? "Claude Desktop" : "浏览器"} · {new Date(report.checked_at).toLocaleString()}</p>
       {report.renderer_class && <p>实际图形环境：{renderers[report.renderer_class] || "未观测"}</p>}
       {report.browser && <details><summary>浏览器实际观测值</summary><dl>
+        <dt>页面实际时区</dt><dd>{report.browser_timezone || "未观测"}</dd>
+        <dt>页面实际语言</dt><dd>{report.browser_language || "未观测"}</dd>
+        <dt>页面实际平台</dt><dd>{report.browser_platform || "未观测"}</dd>
+        <dt>浏览器进程版本</dt><dd>{report.browser.browser_product || "未观测，当前组件或窗口模式未提供"}</dd>
+        <dt>JavaScript 引擎版本（V8）</dt><dd>{report.browser.javascript_version || "未观测"}</dd>
         <dt>User Agent</dt><dd>{report.browser.user_agent}</dd>
         <dt>图形渲染器</dt><dd>{report.browser.webgl.renderer || "未观测"}</dd>
         <dt>显示尺寸</dt><dd>{report.browser.screen.width} × {report.browser.screen.height}，像素比 {report.browser.screen.pixel_ratio}</dd>
         <dt>诊断文档视口</dt><dd>{report.browser.viewport.width} × {report.browser.viewport.height}</dd>
       </dl></details>}
+      {report.browser && <p className="field-help">浏览器特征探针估算受探针覆盖、平台和功能开关影响，不能代替实际进程版本。第三方风险分级不代表 Claude 的账户审核结论。</p>}
       <ul className="device-check-results">{report.checks.map(check => <li key={check.id} data-state={check.state}><strong>{check.title}</strong><span>{labels[check.state] || "未观测"}</span><p>{check.evidence}</p></li>)}</ul>
     </div>}
   </section>;

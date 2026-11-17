@@ -97,6 +97,7 @@ function App() {
     [layout, setLayout] = useState(() => ({ active: localStorage.getItem(clientStorageKey("cage-active")) || "" })),
     [browser, setBrowser] = useState({ tabs: [] }),
     [browserSettingsRevision, setBrowserSettingsRevision] = useState(0),
+    [environmentReport, setEnvironmentReport] = useState(null),
     [settingsOpen, setSettingsOpen] = useState(false),
     [guestSystem, setGuestSystem] = useState(undefined),
     [startRequest, setStartRequest] = useState(null),
@@ -1947,6 +1948,8 @@ function App() {
         <SettingsPanel
           current={settings}
           status={status}
+          environmentReport={environmentReport}
+          onEnvironmentReport={setEnvironmentReport}
           initialSection={settingsSection}
           onClose={() => setSettingsOpen(false)}
           onSaved={refreshSettings}
@@ -2077,6 +2080,9 @@ function App() {
       )}
       {safetyOpen && (
         <SafetyPanel
+          settings={settings}
+          environmentReport={environmentReport}
+          onEnvironmentReport={setEnvironmentReport}
           status={
             connectionError
               ? {

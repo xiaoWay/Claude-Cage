@@ -144,6 +144,7 @@ export function ExitPolicyFields({
           disabled={
             busy ||
             !observation ||
+            observation.evidence?.country_status === "conflict" ||
             (policy.mode === "dynamic" && policy.scope === "any")
           }
           onClick={bind}

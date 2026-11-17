@@ -28,6 +28,8 @@ import { AppearanceSettings } from "./appearance-settings";
 import { ProxySettings } from "./proxy-settings";
 import { ExitPolicyFields } from "./exit-policy";
 import { canonicalExitPolicy } from "./safety-state.mjs";
+import { EnvironmentAssessment } from "./environment-assessment.jsx";
+import { canApplyLocationTimezone } from "./location-evidence.mjs";
 import { EnvironmentVersions } from "./environment-versions";
 import { EnvironmentStorage } from "./environment-storage";
 import { EnvironmentCache } from "./environment-cache";
@@ -52,6 +54,8 @@ const sections = [
 export function SettingsPanel({
   current,
   status,
+  environmentReport,
+  onEnvironmentReport,
   onClose,
   onSaved,
   onConfirm,
@@ -138,9 +142,9 @@ export function SettingsPanel({
     try {
       const result = await api("/settings/probe", draft);
       setProbe(result);
-      if (draft.auto_timezone)
+      if (draft.auto_timezone && canApplyLocationTimezone(result))
         setDraft((previous) => ({ ...previous, timezone: result.timezone }));
-      if (draft.auto_language && result.suggested_locale)
+      if (draft.auto_language && result.suggested_locale && result.country_code !== "CN" && result.evidence?.country_status === "consistent")
         setDraft((previous) => ({
           ...previous,
           locale: result.suggested_locale,
@@ -305,16 +309,17 @@ export function SettingsPanel({
                           "zh-CN",
                           { hour: "2-digit", minute: "2-digit" },
                         )}{" "}
-                        {probe ? "验证通过" : "当前环境 · 最近检测"}
+                        {probe ? "出口采样完成" : "当前环境 · 最近检测"}
                       </small>
                     </div>
-                    {probe && <Check size={18} />}
+                    {probe?.evidence?.status === "consistent" && <Check size={18} />}
                   </div>
                 )}
                 <p className="footnote">
                   代理不可用时，Cage 会停止对外联网。修改表单后需要重新验证。
                 </p>
                 <section className="network-exit-policy" aria-label="IP 变化规则">
+                  <button type="button" onClick={() => setSection("region")}>查看环境评估与配置建议</button>
                   <ExitPolicyFields
                     value={draft.exit_policy}
                     onChange={(value) => update("exit_policy", value)}
@@ -332,6 +337,9 @@ export function SettingsPanel({
                   <h3>时区与语言</h3>
                   <p>这些设置作用于 Cage 内的系统、CLI 和浏览器。</p>
                 </div>
+                <EnvironmentAssessment status={status} settings={current} draft={draft} location={currentLoc} browserReport={environmentReport} onBrowserReport={onEnvironmentReport} busy={busy} onProbe={check}
+                  onApplyRecommendation={patch => { setDraft(previous => ({ ...previous, ...patch })); setError(""); }}
+                  onChooseTimezone={timezone => { setDraft(previous => ({ ...previous, timezone, auto_timezone: false })); setError(""); }} />
                 {!draft.auto_timezone && !draft.auto_language && (
                   <p className="field-help">
                     时区和语言将使用下方手动选择的值。所有出口仍须查询国家或地区，确认不属于中国大陆；静态 IP 和不限地区也不能跳过此检查。
@@ -368,9 +376,11 @@ export function SettingsPanel({
                   <div className="inline-info">
                     <Clock3 size={16} />
                     <span>
-                      {probe
-                        ? `出口建议时区：${probe.timezone}，保存时应用。`
-                        : "保存时经代理查询所在地；查询失败会保留原配置。"}
+                      {probe && canApplyLocationTimezone(probe)
+                        ? `定位来源的时区建议一致：${probe.timezone}，保存时应用。`
+                        : currentLoc?.evidence && currentLoc.evidence.timezone_status !== "consistent"
+                          ? "定位时区存在分歧或证据不足，保留当前时区，请核对上方来源。"
+                          : "保存时核对多来源定位；分歧或查询失败时保留原配置。"}
                     </span>
                     <button
                       className="text-button"

@@ -1,6 +1,9 @@
 package workbench
 
-import "github.com/sylvinus/agent-vm/internal/cage"
+import (
+	"github.com/sylvinus/agent-vm/internal/cage"
+	"github.com/sylvinus/agent-vm/internal/exitpolicy"
+)
 
 // These are product defaults for common regions, not a claim that a country
 // has one language. Unlisted regions retain the user's applied language.
@@ -19,13 +22,21 @@ func languageSuggestion(country string) (locale, browser string) {
 	return "", ""
 }
 
-func autoRegionSettings(cfg cage.Config, preferences Preferences, location Location) cage.Config {
-	if preferences.AutoTimezone && location.Timezone != "" {
-		cfg.Timezone = location.Timezone
+// Automatic fields are derived from evidence, never from a client's draft.
+// Inconclusive observations preserve the saved values, including for older UIs.
+func autoRegionSettings(cfg, saved cage.Config, preferences Preferences, location Location) cage.Config {
+	if preferences.AutoTimezone {
+		cfg.Timezone = saved.Timezone
+		if location.Timezone != "" && (location.Evidence == nil || location.Evidence.TimezoneStatus == exitpolicy.LocationConsistent && location.Evidence.CountryStatus == exitpolicy.LocationConsistent) {
+			cfg.Timezone = location.Timezone
+		}
 	}
 	if preferences.AutoLanguage {
-		if locale, browser := languageSuggestion(location.CountryCode); locale != "" {
-			cfg.Locale, cfg.BrowserLanguage = locale, browser
+		cfg.Locale, cfg.BrowserLanguage = saved.Locale, saved.BrowserLanguage
+		if location.Evidence == nil || location.Evidence.CountryStatus == exitpolicy.LocationConsistent {
+			if locale, browser := languageSuggestion(location.CountryCode); locale != "" {
+				cfg.Locale, cfg.BrowserLanguage = locale, browser
+			}
 		}
 	}
 	return cfg

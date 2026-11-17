@@ -1,0 +1,25 @@
+.environment-assessment { border: 1px solid var(--line); border-radius: 10px; margin-block: 16px; overflow-wrap: anywhere; }
+.environment-assessment > details > summary { cursor: pointer; padding: 14px; }
+.environment-assessment > details > summary > * { margin-inline-end: 12px; }
+.assessment-score { font-variant-numeric: tabular-nums; }
+.assessment-content { padding: 0 14px 14px; }
+.assessment-content > h4 { margin: 20px 0 10px; }
+.assessment-recommendations { display: grid; grid-template-columns: minmax(110px, auto) 1fr; gap: 12px 18px; }
+.assessment-recommendations dd { margin: 0; }
+.assessment-recommendations p { margin: 6px 0 0; color: var(--muted); }
+.assessment-category { border-top: 1px solid var(--line); padding-block: 10px; }
+.assessment-category > summary, .assessment-method > summary { cursor: pointer; }
+.assessment-category ul { padding-inline-start: 20px; }
+.assessment-category li { margin-block: 14px; }
+.assessment-category p { margin: 6px 0; }
+.assessment-category small { color: var(--muted); }
+.environment-assessment [data-state="failed"] > strong, .environment-assessment span[data-state="failed"] { color: var(--danger, #b91c1c); }
+.environment-assessment span[data-state="unknown"] { color: var(--muted); }
+.environment-assessment .location-evidence { border: 0; margin-block: 20px; }
+.environment-assessment .location-evidence-content { padding: 0; }
+.assessment-method { margin-top: 18px; }
+@media (max-width: 600px) {
+  .environment-assessment > details > summary > span { display: block; margin-top: 6px; }
+  .assessment-recommendations { grid-template-columns: 1fr; gap: 6px; }
+  .assessment-recommendations dd { margin-bottom: 12px; }
+}

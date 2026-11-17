@@ -13,9 +13,11 @@ import (
 )
 
 type deviceObservation struct {
-	UserAgent   string `json:"user_agent"`
-	Platform    string `json:"platform"`
-	ClientHints *struct {
+	BrowserProduct    string `json:"browser_product,omitempty"`
+	JavaScriptVersion string `json:"javascript_version,omitempty"`
+	UserAgent         string `json:"user_agent"`
+	Platform          string `json:"platform"`
+	ClientHints       *struct {
 		Brands []struct {
 			Brand   string `json:"brand"`
 			Version string `json:"version"`
@@ -66,20 +68,27 @@ type deviceCheckItem struct {
 	Evidence string `json:"evidence"`
 }
 type deviceCheckReport struct {
-	Target        string                   `json:"target"`
-	CheckedAt     time.Time                `json:"checked_at"`
-	Checks        []deviceCheckItem        `json:"checks"`
-	Browser       *deviceObservation       `json:"browser,omitempty"`
-	System        *deviceSystemObservation `json:"system,omitempty"`
-	Application   *claudeDesktopState      `json:"application,omitempty"`
-	RendererClass string                   `json:"renderer_class,omitempty"`
+	RunID            string                   `json:"run_id,omitempty"`
+	Configuration    string                   `json:"configuration,omitempty"`
+	ExpectedTimezone string                   `json:"expected_timezone,omitempty"`
+	ExpectedLanguage string                   `json:"expected_language,omitempty"`
+	BrowserTimezone  string                   `json:"browser_timezone,omitempty"`
+	BrowserLanguage  string                   `json:"browser_language,omitempty"`
+	BrowserPlatform  string                   `json:"browser_platform,omitempty"`
+	Target           string                   `json:"target"`
+	CheckedAt        time.Time                `json:"checked_at"`
+	Checks           []deviceCheckItem        `json:"checks"`
+	Browser          *deviceObservation       `json:"browser,omitempty"`
+	System           *deviceSystemObservation `json:"system,omitempty"`
+	Application      *claudeDesktopState      `json:"application,omitempty"`
+	RendererClass    string                   `json:"renderer_class,omitempty"`
 }
 
 func publicDeviceText(s string, limit int) bool {
 	return len(s) <= limit && !strings.ContainsAny(s, "\x00\r\n")
 }
 func (v *deviceObservation) valid() bool {
-	if v == nil || !publicDeviceText(v.UserAgent, 1024) || !publicDeviceText(v.Platform, 128) || !publicDeviceText(v.WebGL.Renderer, 512) || !publicDeviceText(v.WebGL.Vendor, 256) || !publicDeviceText(v.WebGL.Version, 256) || len(v.Audio.Labels) > 8 {
+	if v == nil || !publicDeviceText(v.BrowserProduct, 128) || !publicDeviceText(v.JavaScriptVersion, 128) || !publicDeviceText(v.UserAgent, 1024) || !publicDeviceText(v.Platform, 128) || !publicDeviceText(v.WebGL.Renderer, 512) || !publicDeviceText(v.WebGL.Vendor, 256) || !publicDeviceText(v.WebGL.Version, 256) || len(v.Audio.Labels) > 8 {
 		return false
 	}
 	for _, label := range v.Audio.Labels {
@@ -113,6 +122,7 @@ func (v *deviceObservation) valid() bool {
 }
 
 var chromeMajor = regexp.MustCompile(`(?:Chrome|Chromium|Edg)/([0-9]+)\.`)
+var browserProductMajor = regexp.MustCompile(`^(?:HeadlessChrome|Chrome|Chromium)/([0-9]+)\.[0-9]+(?:\.[0-9]+){0,2}$`)
 var softwareRenderer = regexp.MustCompile(`(?i)swiftshader|llvmpipe|softpipe|software|\bwarp\b|basic render`)
 var virtualRenderer = regexp.MustCompile(`(?i)virgl|paravirtual|virtio`)
 
@@ -157,6 +167,15 @@ func evaluateDevice(p *guestprofile.Profile, v *deviceObservation) ([]deviceChec
 		}
 	} else {
 		add("user-agent", "浏览器 UA 与 Client Hints", "unknown", "当前文档未暴露 Client Hints，不能据此判定版本一致。")
+	}
+	product := browserProductMajor.FindStringSubmatch(v.BrowserProduct)
+	switch {
+	case len(ua) != 2 || len(product) != 2 || ua[1] == "0" || product[1] == "0":
+		add("browser-version", "页面 UA 与浏览器进程版本", "unknown", "当前组件或窗口模式未提供可比较的浏览器进程版本与页面 UA；请核对组件支持，未用特征探针推断版本替代实际读回。")
+	case ua[1] != product[1]:
+		add("browser-version", "页面 UA 与浏览器进程版本", "failed", "页面 UA 声明主版本 "+ua[1]+"，浏览器进程报告 "+v.BrowserProduct+"，两者不一致；请移除 UA 改写并核对浏览器组件。")
+	default:
+		add("browser-version", "页面 UA 与浏览器进程版本", "passed", "页面 UA 与浏览器进程报告的 Chromium 主版本一致（"+product[1]+"）；UA 的次版本归零属于正常精简格式。此项不验证安装来源或特征探针推断，也不代表账户审核结论。")
 	}
 	class := "unobserved"
 	if v.WebGL.Renderer != "" && v.WebGL.Renderer != "WebKit WebGL" && v.WebGL.Renderer != "WebGL" {
@@ -275,12 +294,22 @@ func (s *Server) deviceCheck(w http.ResponseWriter, r *http.Request) {
 	defer s.op.Unlock()
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
+	cfg, err := loadConfig(s.configPath)
+	if err != nil {
+		requestError(w, err)
+		return
+	}
 	p, err := guestprofile.Load(s.profile)
 	if err != nil {
 		requestError(w, err)
 		return
 	}
-	report := deviceCheckReport{Target: in.Target, CheckedAt: time.Now(), Checks: []deviceCheckItem{}}
+	report := deviceCheckReport{Target: in.Target, CheckedAt: time.Now(), Checks: []deviceCheckItem{}, Configuration: cfg.Fingerprint(), ExpectedTimezone: cfg.Timezone, ExpectedLanguage: cfg.BrowserLanguage}
+	s.mu.Lock()
+	if s.safety.Gate != nil {
+		report.RunID = s.safety.Gate.RunID
+	}
+	s.mu.Unlock()
 	if s.macosGuest == nil && s.windowsGuest == nil {
 		if data, e := s.guest(ctx, deviceSystemProbe); e == nil {
 			var machine deviceSystemObservation
@@ -314,11 +343,6 @@ func (s *Server) deviceCheck(w http.ResponseWriter, r *http.Request) {
 		}
 		report.Checks = append(report.Checks, deviceCheckItem{"desktop-renderer", "Claude Desktop 内部渲染器", "unknown", "官方应用没有受支持的本地渲染自检接口；未读取登录资料、注入代码或开启调试端口，未用浏览器结果代替应用内观测。"})
 	} else {
-		cfg, e := loadConfig(s.configPath)
-		if e != nil {
-			requestError(w, e)
-			return
-		}
 		var observation browserObservation
 		s.mu.Lock()
 		token := s.credentials.Token
@@ -331,6 +355,7 @@ func (s *Server) deviceCheck(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			report.Checks = append(report.Checks, deviceCheckItem{"browser-evidence", "浏览器观测", "unknown", "本地诊断文档未完成，请确认浏览器及客机组件可用后重测。"})
 		} else {
+			report.BrowserTimezone, report.BrowserLanguage, report.BrowserPlatform = observation.Timezone, observation.Language, observation.Platform
 			items, class := evaluateDevice(p, observation.Device)
 			report.Checks = append(report.Checks, items...)
 			report.RendererClass = class

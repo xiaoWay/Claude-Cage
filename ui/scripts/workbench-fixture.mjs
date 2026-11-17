@@ -379,6 +379,10 @@ export async function createWorkbench({
         ip: "192.0.2.10",
         timezone: "America/Los_Angeles",
         checked_at: new Date().toISOString(),
+        evidence: {
+          status: "consistent", country_status: "consistent", timezone_status: "consistent", checked_at: new Date().toISOString(),
+          sources: ["fixture-a", "fixture-b"].map(provider => ({ provider, country_code: "US", city: "Los Angeles", timezone: "America/Los_Angeles" })),
+        },
       };
     return route.fulfill({ json: result });
   });
